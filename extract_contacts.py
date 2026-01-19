@@ -216,12 +216,48 @@ def extract_contacts(url, page=None):
     # Connect to browser (assumes Chrome is running with --remote-debugging-port=9222)
     if page is None:
         try:
+            # Try to connect to existing browser instance
             page = ChromiumPage(addr_or_opts=9222)
         except Exception as e:
-            print(f"❌ Error connecting to browser: {e}")
-            print("\n💡 Make sure Chrome is running with remote debugging:")
-            print("   chrome --remote-debugging-port=9222")
-            return None, None
+            # If connection fails, try to start browser automatically (for production)
+            try:
+                import subprocess
+                import os
+                # Check if we're in a production environment (Render, Heroku, etc.)
+                if os.environ.get('RENDER') or os.environ.get('DYNO'):
+                    print("🔧 Production environment detected, starting headless browser...")
+                    # Try to start chromium in headless mode
+                    chromium_paths = [
+                        '/usr/bin/chromium-browser',
+                        '/usr/bin/chromium',
+                        '/usr/bin/google-chrome',
+                        '/snap/bin/chromium'
+                    ]
+                    for chromium_path in chromium_paths:
+                        if os.path.exists(chromium_path):
+                            subprocess.Popen([
+                                chromium_path,
+                                '--headless',
+                                '--remote-debugging-port=9222',
+                                '--no-sandbox',
+                                '--disable-dev-shm-usage',
+                                '--disable-gpu'
+                            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            time.sleep(2)  # Wait for browser to start
+                            try:
+                                page = ChromiumPage(addr_or_opts=9222)
+                                break
+                            except:
+                                continue
+                    if page is None:
+                        raise Exception("Could not start or connect to browser")
+                else:
+                    raise e
+            except Exception as e2:
+                print(f"❌ Error connecting to browser: {e2}")
+                print("\n💡 Make sure Chrome is running with remote debugging:")
+                print("   chrome --remote-debugging-port=9222")
+                return None, None
     
     name = None
     email = None

@@ -1,7 +1,35 @@
-User_Data/
-venv/
-*.pyc
+# Python
 __pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+contacts.csv
+*.log
+skipped_references.txt
+
+# Environment variables
 .env
-
-
+.env.local
+# Chrome/Chromium browser data (should not be in repo - 137MB!)
+User_Data/
+*.pma
+*.db-journal
+first_party_sets.db
