@@ -219,7 +219,29 @@ def extract_contact_batch_api():
 
 if __name__ == '__main__':
     # Get port from environment variable or use default 5001 (5000 is often used by AirPlay on macOS)
-    port = int(os.environ.get('PORT', 5001))
+    default_port = int(os.environ.get('PORT', 5001))
+    port = default_port
+    
+    # Check if port is available, if not find an available port
+    import socket
+    def is_port_available(port):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(('127.0.0.1', port))
+                return True
+            except OSError:
+                return False
+    
+    if not is_port_available(port):
+        print(f"⚠️  Port {port} is already in use, searching for available port...")
+        for test_port in range(5001, 5100):
+            if is_port_available(test_port):
+                port = test_port
+                print(f"✅ Using port {port} instead")
+                break
+        else:
+            print(f"❌ Could not find an available port in range 5001-5099")
+            sys.exit(1)
     
     print("=" * 60)
     print("🚀 Contact Extractor API Server")

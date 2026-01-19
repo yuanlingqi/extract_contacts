@@ -2,7 +2,7 @@ services:
   - type: web
     name: contact-extractor-api
     env: python
-    buildCommand: pip install -r requirements_api.txt && chmod +x build.sh && ./build.sh
+    buildCommand: pip install -r requirements_api.txt
     startCommand: gunicorn api_server:app --bind 0.0.0.0:$PORT --workers 1 --timeout 300 --worker-class sync
     envVars:
       - key: PYTHON_VERSION

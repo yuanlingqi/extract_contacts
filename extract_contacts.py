@@ -24,6 +24,39 @@ import os
 from datetime import datetime
 
 
+def get_playwright_chromium_path():
+    """Get the path to Playwright's Chromium browser"""
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            # Get the browser path from Playwright
+            browser = p.chromium
+            executable_path = browser.executable_path
+            if executable_path and os.path.exists(executable_path):
+                return executable_path
+    except Exception as e:
+        print(f"   ⚠️  Could not get Playwright path via API: {e}")
+    
+    # Fallback: try to find it manually
+    import glob
+    patterns = [
+        os.path.expanduser('~/.cache/ms-playwright/chromium-*/chrome-linux/chrome'),
+        os.path.expanduser('~/.cache/ms-playwright/chromium-*/chrome-linux/chromium'),
+        '/opt/render/.cache/ms-playwright/chromium-*/chrome-linux/chrome',
+        '/opt/render/.cache/ms-playwright/chromium-*/chrome-linux/chromium',
+        '/root/.cache/ms-playwright/chromium-*/chrome-linux/chrome',
+        '/root/.cache/ms-playwright/chromium-*/chrome-linux/chromium',
+    ]
+    for pattern in patterns:
+        matches = glob.glob(pattern)
+        if matches:
+            path = matches[0]
+            if os.path.exists(path) and os.access(path, os.X_OK):
+                return path
+    
+    return None
+
+
 def extract_email_from_text(text):
     """Extract email addresses from text"""
     if not text:
@@ -227,30 +260,117 @@ def extract_contacts(url, page=None):
                 if os.environ.get('RENDER') or os.environ.get('DYNO'):
                     print("🔧 Production environment detected, starting headless browser...")
                     # Try to start chromium in headless mode
-                    chromium_paths = [
+                    chromium_paths = []
+                    
+                    # First, try to get Playwright's Chromium path
+                    playwright_path = get_playwright_chromium_path()
+                    if playwright_path:
+                        chromium_paths.append(playwright_path)
+                        print(f"   Found Playwright Chromium: {playwright_path}")
+                    
+                    # Also try to find it manually
+                    import glob
+                    playwright_chromium_patterns = [
+                        os.path.expanduser('~/.cache/ms-playwright/chromium-*/chrome-linux/chrome'),
+                        '/opt/render/.cache/ms-playwright/chromium-*/chrome-linux/chrome',
+                    ]
+                    for pattern in playwright_chromium_patterns:
+                        matches = glob.glob(pattern)
+                        if matches:
+                            chromium_paths.extend(matches)
+                    
+                    # Add system paths
+                    chromium_paths.extend([
                         '/usr/bin/chromium-browser',
                         '/usr/bin/chromium',
                         '/usr/bin/google-chrome',
-                        '/snap/bin/chromium'
-                    ]
+                        '/snap/bin/chromium',
+                        '/usr/bin/google-chrome-stable',
+                        os.path.expanduser('~/.local/bin/chromium-browser'),
+                        os.path.expanduser('~/.local/chromium/chrome')
+                    ])
+                    
+                    # Also try to find chromium in PATH
+                    import shutil
+                    chromium_in_path = shutil.which('chromium-browser') or shutil.which('chromium') or shutil.which('google-chrome')
+                    if chromium_in_path:
+                        chromium_paths.insert(0, chromium_in_path)
+                    
                     for chromium_path in chromium_paths:
-                        if os.path.exists(chromium_path):
-                            subprocess.Popen([
-                                chromium_path,
-                                '--headless',
-                                '--remote-debugging-port=9222',
-                                '--no-sandbox',
-                                '--disable-dev-shm-usage',
-                                '--disable-gpu'
-                            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                            time.sleep(2)  # Wait for browser to start
+                        if chromium_path and os.path.exists(chromium_path):
                             try:
-                                page = ChromiumPage(addr_or_opts=9222)
-                                break
-                            except:
+                                print(f"   Trying to start: {chromium_path}")
+                                subprocess.Popen([
+                                    chromium_path,
+                                    '--headless',
+                                    '--remote-debugging-port=9222',
+                                    '--no-sandbox',
+                                    '--disable-dev-shm-usage',
+                                    '--disable-gpu',
+                                    '--disable-software-rasterizer',
+                                    '--disable-extensions'
+                                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                time.sleep(3)  # Wait for browser to start
+                                try:
+                                    page = ChromiumPage(addr_or_opts=9222)
+                                    print(f"   ✅ Successfully connected to browser at {chromium_path}")
+                                    break
+                                except Exception as conn_err:
+                                    print(f"   ⚠️  Could not connect: {conn_err}")
+                                    continue
+                            except Exception as start_err:
+                                print(f"   ⚠️  Could not start {chromium_path}: {start_err}")
                                 continue
+                    
                     if page is None:
-                        raise Exception("Could not start or connect to browser")
+                        # Last resort: try using DrissionPage's built-in browser management
+                        playwright_chromium = None
+                        try:
+                            print("   🔄 Trying DrissionPage browser management...")
+                            from DrissionPage import ChromiumOptions
+                            
+                            # Get Playwright Chromium path
+                            playwright_chromium = get_playwright_chromium_path()
+                            
+                            if not playwright_chromium:
+                                print("   ⚠️  Playwright Chromium not found, searching common locations...")
+                                # Try to find it in common locations
+                                import glob
+                                search_paths = [
+                                    os.path.expanduser('~/.cache/ms-playwright'),
+                                    '/opt/render/.cache/ms-playwright',
+                                    '/root/.cache/ms-playwright',
+                                ]
+                                for base_path in search_paths:
+                                    if os.path.exists(base_path):
+                                        pattern = os.path.join(base_path, 'chromium-*/chrome-linux/chrome')
+                                        matches = glob.glob(pattern)
+                                        if matches:
+                                            playwright_chromium = matches[0]
+                                            print(f"   ✅ Found Chromium at: {playwright_chromium}")
+                                            break
+                            
+                            co = ChromiumOptions()
+                            co.headless(True)
+                            co.set_argument('--no-sandbox')
+                            co.set_argument('--disable-dev-shm-usage')
+                            co.set_argument('--disable-gpu')
+                            co.set_argument('--disable-software-rasterizer')
+                            
+                            # Set browser path if we found Playwright's Chromium
+                            if playwright_chromium and os.path.exists(playwright_chromium):
+                                print(f"   📍 Configuring browser path: {playwright_chromium}")
+                                co.set_browser_path(playwright_chromium)
+                            else:
+                                print("   ⚠️  No browser path found, DrissionPage will try to find it automatically")
+                            
+                            page = ChromiumPage(co)
+                            print("   ✅ Browser started via DrissionPage")
+                        except Exception as drission_err:
+                            error_msg = str(drission_err)
+                            if not playwright_chromium:
+                                error_msg += " (Playwright Chromium path not found)"
+                            raise Exception(f"Could not start or connect to browser. Tried all methods. Last error: {error_msg}")
                 else:
                     raise e
             except Exception as e2:
