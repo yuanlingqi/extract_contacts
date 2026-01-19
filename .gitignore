@@ -1,0 +1,7 @@
+User_Data/
+venv/
+*.pyc
+__pycache__/
+.env
+
+
