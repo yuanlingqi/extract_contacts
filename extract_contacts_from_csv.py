@@ -1,21 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-Contact Extractor - Extract name, phone, and email from a single URL
+Contact Extractor - Extract name, phone, and email from URLs in CSV file
 
 Usage:
-    # Single URL mode (returns JSON):
-    python extract_contacts.py <URL>
-    
-    # HTTP API server mode:
-    python extract_contacts.py --server
+    python extract_contacts.py [contacts.csv]
 
 Example:
-    # Extract from single URL (JSON output):
-    python extract_contacts.py https://www.facebook.com/FidelidadeSeguros.Portugal
-    
-    # Start HTTP API server:
-    python extract_contacts.py --server
-    # Then call: http://localhost:5000/extract?url=<URL>
+    python extract_contacts.py
+    python extract_contacts.py contacts.csv
+
+The CSV file should have:
+- Column A: URL
+- Column B: Name (will be filled)
+- Column C: Phone (will be filled)
+- Column D: Email (will be filled)
 """
 from DrissionPage import ChromiumPage
 import time
@@ -23,7 +21,6 @@ import re
 import sys
 import csv
 import os
-import json
 from datetime import datetime
 
 
@@ -554,7 +551,7 @@ def extract_contacts(url, page=None):
         
         # For Facebook pages, extract directly from structured Intro section
         if is_facebook_url(url):
-            contact_info = page.run_js(r"""
+            contact_info = page.run_js("""
                 // Find phone and email directly from Facebook Intro section
                 let phone = null;
                 let email = null;
@@ -929,275 +926,179 @@ def update_csv_row(filename, row_num, name, phone, email):
         return False
 
 
-def extract_single_url(url):
-    """Extract contacts from a single URL and return JSON"""
-    try:
-        # Extract contacts
-        result = extract_contacts(url, page=None)
-        
-        if result is None:
-            return {
-                "success": False,
-                "error": "Failed to connect to browser or extract contacts",
-                "url": url
-            }
-        
-        results, page = result
-        
-        if results:
-            name = clean_name(results.get('name', '') or '')
-            email = results.get('email', '') or ''
-            phone = results.get('phone', '') or ''
-            
-            return {
-                "success": True,
-                "data": {
-                    "name": name,
-                    "email": email,
-                    "phone": phone,
-                    "url": url
-                }
-            }
-        else:
-            return {
-                "success": False,
-                "error": "Failed to extract contacts from the URL",
-                "url": url
-            }
-            
-    except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "url": url
-        }
-
-
 def main():
-    """Main function - Single URL mode (returns JSON)"""
-    # Check if first argument is a URL
-    if len(sys.argv) < 2:
-        print("❌ Error: URL parameter required")
-        print("\n💡 Usage:")
-        print("   Single URL (JSON): python extract_contacts.py <URL>")
-        print("   HTTP API server: python extract_contacts.py --server")
-        print("\n   Example:")
-        print("   python extract_contacts.py https://www.facebook.com/FidelidadeSeguros.Portugal")
+    """Main function - Read CSV, extract contacts for each URL, and write back to CSV"""
+    # Check if user wants to just clean the CSV
+    if len(sys.argv) > 1 and sys.argv[1] == '--clean':
+        csv_file = sys.argv[2] if len(sys.argv) > 2 else 'contacts.csv'
+        if not os.path.exists(csv_file):
+            print(f"❌ Error: CSV file not found: {csv_file}")
+            sys.exit(1)
+        print("=" * 60)
+        print("🧹 Cleaning Names in CSV")
+        print("=" * 60)
+        if rewrite_csv_clean_names(csv_file):
+            print(f"\n✅ CSV file cleaned: {csv_file}")
+        else:
+            print(f"\n❌ Failed to clean CSV file")
+        return
+    
+    # Get CSV file path (default: contacts.csv)
+    csv_file = sys.argv[1] if len(sys.argv) > 1 else 'contacts.csv'
+    
+    # Check if CSV file exists
+    if not os.path.exists(csv_file):
+        print(f"❌ Error: CSV file not found: {csv_file}")
+        print("\n💡 Create a CSV file with:")
+        print("   Column A: URL")
+        print("   Column B: Name (will be filled)")
+        print("   Column C: Phone (will be filled)")
+        print("   Column D: Email (will be filled)")
         sys.exit(1)
     
-    first_arg = sys.argv[1]
+    print("=" * 60)
+    print("📞 Contact Extractor - CSV Batch Processing")
+    print("=" * 60)
+    print(f"📖 Reading URLs from: {csv_file}\n")
     
-    # Check if it's a URL
-    if not first_arg.startswith(('http://', 'https://')):
-        print(f"❌ Error: Invalid URL: {first_arg}")
-        print("\n💡 URL must start with http:// or https://")
-        print("\n   Usage:")
-        print("   python extract_contacts.py <URL>")
-        print("   python extract_contacts.py --server")
+    # Step 1: Clean existing names in CSV (remove verified badges)
+    print("🧹 Cleaning existing names in CSV...")
+    rewrite_csv_clean_names(csv_file)
+    print()
+    
+    # Step 2: Read all URLs from CSV file (column A)
+    print("📋 Reading URLs from CSV...")
+    urls = read_csv_urls(csv_file)
+    
+    if not urls:
+        print("❌ No URLs found in CSV file")
+        print("\n💡 Make sure your CSV file has:")
+        print("   - Header row: URL,Name,Phone,Email")
+        print("   - At least one URL in column A (starting from row 2)")
         sys.exit(1)
     
-    # Single URL mode - return JSON
-    url = first_arg
-    result = extract_single_url(url)
+    print(f"✅ Found {len(urls)} URLs in CSV file")
     
-    # Output JSON to stdout
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    # Step 3: Filter URLs that need processing
+    # Process if missing data OR if name needs cleaning
+    urls_to_process = []
+    for url_data in urls:
+        name = url_data.get('name', '')
+        phone = url_data.get('phone', '')
+        email = url_data.get('email', '')
+        
+        # Check if name needs cleaning (has verified badges)
+        needs_cleaning = '已认证账户' in name or '已认证' in name or 'Verified Account' in name
+        
+        # Check if data is missing
+        missing_data = not (name and phone and email)
+        
+        if missing_data or needs_cleaning:
+            urls_to_process.append(url_data)
+        else:
+            print(f"⏭️  Skipping row {url_data['row']}: {url_data['url'][:50]}... (already has all data)")
     
-    # Exit with appropriate code
-    sys.exit(0 if result.get('success') else 1)
+    if not urls_to_process:
+        print("\n✅ All URLs already processed! No action needed.")
+        return
+    
+    print(f"\n📋 Processing {len(urls_to_process)} URLs...\n")
+    
+    # Step 4: Connect to browser
+    print("🔌 Connecting to browser...")
+    try:
+        page = ChromiumPage(addr_or_opts=9222)
+        print("✅ Browser connected successfully\n")
+    except Exception as e:
+        print(f"❌ Error connecting to browser: {e}")
+        print("\n💡 Make sure Chrome is running with remote debugging:")
+        print("   chrome --remote-debugging-port=9222")
+        print("\n   On macOS:")
+        print("   /Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=9222")
+        sys.exit(1)
+    
+    # Step 5: Process each URL and write back to CSV
+    # Statistics tracking
+    total_processed = 0
+    total_found_name = 0
+    total_found_email = 0
+    total_found_phone = 0
+    total_errors = 0
+    
+    # Process each URL one by one
+    for idx, url_data in enumerate(urls_to_process, start=1):
+        url = url_data['url']
+        row_num = url_data['row']
+        
+        print(f"\n[{idx}/{len(urls_to_process)}] Processing row {row_num}")
+        print(f"   URL: {url}")
+        
+        try:
+            # Extract contacts from URL
+            results, page = extract_contacts(url, page)
+            
+            if results:
+                name = results.get('name', '') or ''
+                phone = results.get('phone', '') or ''
+                email = results.get('email', '') or ''
+                
+                # Update statistics
+                if name:
+                    total_found_name += 1
+                if email:
+                    total_found_email += 1
+                if phone:
+                    total_found_phone += 1
+                
+                # Write results back to CSV file
+                if update_csv_row(csv_file, row_num, name, phone, email):
+                    print(f"   ✅ Successfully updated CSV row {row_num}")
+                    if name:
+                        print(f"      📝 Name:  {name}")
+                    if email:
+                        print(f"      📧 Email: {email}")
+                    if phone:
+                        print(f"      📞 Phone: {phone}")
+                else:
+                    print(f"   ⚠️  Failed to update CSV row {row_num}")
+                    total_errors += 1
+                
+                total_processed += 1
+                
+                # Add delay between requests to avoid rate limiting
+                if idx < len(urls_to_process):  # Don't wait after last URL
+                    time.sleep(2)
+            else:
+                print(f"   ❌ Failed to extract contacts from URL")
+                total_errors += 1
+
+        except KeyboardInterrupt:
+            print("\n⏹ Interrupted by user (Ctrl+C). Stopping gracefully without writing further rows.")
+            break
+        except Exception as e:
+            print(f"   ❌ Error processing URL: {e}")
+            total_errors += 1
+            # Longer delay on error
+            if idx < len(urls_to_process):
+                try:
+                    time.sleep(3)
+                except KeyboardInterrupt:
+                    print("\n⏹ Interrupted by user (Ctrl+C). Stopping gracefully.")
+                    break
+    
+    # Step 6: Print final statistics
+    print("\n" + "=" * 60)
+    print("📊 FINAL STATISTICS")
+    print("=" * 60)
+    print(f"✅ Successfully processed: {total_processed}")
+    print(f"📝 Found names: {total_found_name}")
+    print(f"📧 Found emails: {total_found_email}")
+    print(f"📞 Found phones: {total_found_phone}")
+    print(f"❌ Errors: {total_errors}")
+    print("=" * 60)
+    print(f"\n💾 All results saved to: {csv_file}")
+    print(f"📂 You can now open the CSV file to view the results")
 
 
 if __name__ == "__main__":
-    # Check if running as HTTP server
-    if len(sys.argv) > 1 and sys.argv[1] == '--server':
-        # Run as HTTP server
-        try:
-            from flask import Flask, request, jsonify
-            from flask_cors import CORS
-        except ImportError:
-            print("❌ Error: Flask and flask-cors are required for server mode")
-            print("💡 Install with: pip install Flask flask-cors")
-            sys.exit(1)
-        
-        app = Flask(__name__)
-        CORS(app)
-        
-        @app.route('/extract', methods=['GET'])
-        def extract_api():
-            """Extract contacts from URL parameter"""
-            url = request.args.get('url')
-            
-            if not url:
-                return jsonify({
-                    "success": False,
-                    "error": "Missing 'url' parameter. Usage: /extract?url=<URL>"
-                }), 400
-            
-            if not url.startswith(('http://', 'https://')):
-                return jsonify({
-                    "success": False,
-                    "error": "URL must start with http:// or https://"
-                }), 400
-            
-            result = extract_single_url(url)
-            status_code = 200 if result.get('success') else 500
-            return jsonify(result), status_code
-        
-        @app.route('/health', methods=['GET'])
-        def health():
-            return jsonify({"status": "healthy", "service": "Contact Extractor"}), 200
-        
-        # Get port from environment variable or use default 5001 (5000 is often used by AirPlay on macOS)
-        default_port = int(os.environ.get('PORT', 5001))
-        port = default_port
-        
-        # Check if port is available, if not kill the process using it
-        import socket
-        import subprocess
-        import platform
-        
-        def is_port_available(port):
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                try:
-                    s.bind(('127.0.0.1', port))
-                    return True
-                except OSError:
-                    return False
-        
-        def kill_process_on_port(port):
-            """Kill all processes using the specified port"""
-            killed_count = 0
-            try:
-                system = platform.system()
-                if system == 'Darwin':  # macOS
-                    # Find all PIDs using lsof
-                    result = subprocess.run(
-                        ['lsof', '-ti', f':{port}'],
-                        capture_output=True,
-                        text=True
-                    )
-                    if result.returncode == 0 and result.stdout.strip():
-                        pids = [pid.strip() for pid in result.stdout.strip().split('\n') if pid.strip()]
-                        for pid in pids:
-                            try:
-                                subprocess.run(['kill', '-9', pid], check=True, 
-                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                                print(f"✅ Killed process {pid} on port {port}")
-                                killed_count += 1
-                            except (subprocess.CalledProcessError, ValueError):
-                                pass
-                elif system == 'Linux':
-                    # Find all PIDs using lsof
-                    result = subprocess.run(
-                        ['lsof', '-ti', f':{port}'],
-                        capture_output=True,
-                        text=True
-                    )
-                    if result.returncode == 0 and result.stdout.strip():
-                        pids = [pid.strip() for pid in result.stdout.strip().split('\n') if pid.strip()]
-                        for pid in pids:
-                            try:
-                                subprocess.run(['kill', '-9', pid], check=True,
-                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                                print(f"✅ Killed process {pid} on port {port}")
-                                killed_count += 1
-                            except (subprocess.CalledProcessError, ValueError):
-                                pass
-                elif system == 'Windows':
-                    # Find all PIDs using netstat
-                    result = subprocess.run(
-                        ['netstat', '-ano'],
-                        capture_output=True,
-                        text=True
-                    )
-                    pids_found = set()
-                    for line in result.stdout.split('\n'):
-                        if f':{port}' in line and 'LISTENING' in line:
-                            parts = line.split()
-                            if len(parts) > 0:
-                                pid = parts[-1]
-                                if pid.isdigit() and pid not in pids_found:
-                                    pids_found.add(pid)
-                                    try:
-                                        subprocess.run(['taskkill', '/F', '/PID', pid], check=True,
-                                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                                        print(f"✅ Killed process {pid} on port {port}")
-                                        killed_count += 1
-                                    except subprocess.CalledProcessError:
-                                        pass
-            except Exception as e:
-                print(f"⚠️  Error killing process on port {port}: {e}")
-            return killed_count > 0
-        
-        if not is_port_available(port):
-            print(f"⚠️  Port {port} is already in use, attempting to kill all processes...")
-            import time
-            
-            # Try multiple times (some processes may restart automatically)
-            max_retries = 3
-            port_freed = False
-            
-            for attempt in range(max_retries):
-                if attempt > 0:
-                    print(f"🔄 Retry {attempt + 1}/{max_retries}...")
-                
-                killed = kill_process_on_port(port)
-                
-                if killed:
-                    # Wait longer for port to be released
-                    for wait_time in [1, 2, 3]:
-                        time.sleep(wait_time)
-                        if is_port_available(port):
-                            print(f"✅ Port {port} is now available")
-                            port_freed = True
-                            break
-                    
-                    # If port is freed, exit the retry loop
-                    if port_freed:
-                        break
-                    
-                    # Port still in use, check if new processes appeared
-                    if attempt < max_retries - 1:
-                        print(f"⏳ Port {port} still in use, checking for new processes...")
-                        continue
-                    else:
-                        print(f"❌ Port {port} is still in use after {max_retries} attempts")
-                        print(f"💡 This might be a system service (like AirPlay Receiver on macOS)")
-                        print(f"💡 You can manually kill it with:")
-                        if platform.system() == 'Darwin' or platform.system() == 'Linux':
-                            print(f"   lsof -ti :{port} | xargs kill -9")
-                            print(f"   Or disable AirPlay Receiver in System Settings")
-                        else:
-                            print(f"   netstat -ano | findstr :{port}")
-                        sys.exit(1)
-                else:
-                    # Check if port became available anyway (process might have exited)
-                    if is_port_available(port):
-                        print(f"✅ Port {port} is now available")
-                        port_freed = True
-                        break
-                    
-                    if attempt < max_retries - 1:
-                        time.sleep(1)
-                        continue
-                    else:
-                        print(f"❌ Could not find or kill process on port {port}")
-                        print(f"💡 You can manually check with:")
-                        if platform.system() == 'Darwin' or platform.system() == 'Linux':
-                            print(f"   lsof -i :{port}")
-                            print(f"   Then kill with: kill -9 <PID>")
-                        else:
-                            print(f"   netstat -ano | findstr :{port}")
-                        sys.exit(1)
-            
-            # Final check
-            if not is_port_available(port):
-                print(f"❌ Port {port} is still in use after all attempts")
-                sys.exit(1)
-        
-        print(f"🚀 Starting Contact Extractor API server on port {port}")
-        print(f"📡 Endpoint: http://localhost:{port}/extract?url=<URL>")
-        app.run(host='0.0.0.0', port=port, debug=False)
-    else:
-        # Normal mode (single URL or CSV batch)
-        main()
+    main()

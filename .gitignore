@@ -23,9 +23,7 @@ Thumbs.db
 # Project specific
 contacts.csv
 *.log
-skipped_references.txt
-
-# Environment variables
+skipped_references.txt# Environment variables
 .env
 .env.local
 # Chrome/Chromium browser data (should not be in repo - 137MB!)
